@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Mixed-capability GRPO training — DTensor (FSDP2) backend.
-# Simpler setup, no CUDA_HOME or TORCH_CUDA_ARCH_LIST required.
-# Best for smaller models (≤8B) on single nodes.
+# Mixed-capability GRPO training — DTensor (FSDP2) backend, async mode.
+# Async GRPO overlaps generation and training for higher throughput.
+# Colocated inference is disabled (required for async GRPO).
+#
+# NOTE: The ReplayBuffer actor uses the vllm venv which builds deep-ep.
+# deep-ep requires nvcc. On Mila, load a CUDA module or set CUDA_HOME
+# before launching, e.g.:
+#   module load cuda/12.x
 #
 # Usage:
 #   uv run python examples/nemo_gym/run_grpo_nemo_gym.py \
-#       --config examples/nemo_gym/grpo_mixed_capabilities_dtensor.yaml \
+#       --config examples/nemo_gym/grpo_mixed_capabilities_dtensor_async.yaml \
 #       policy.model_name=<your-model>
 
 grpo:
@@ -30,9 +35,9 @@ grpo:
   normalize_rewards: false
   use_leave_one_out_baseline: true
   val_period: 50
-  val_at_start: true
-  val_at_end: true
-  overlong_filtering: false
+  val_at_start: false
+  val_at_end: false
+  overlong_filtering: true
   max_val_samples: null
   val_batch_size: null
   seed: 42
@@ -59,9 +64,9 @@ grpo:
   seq_logprob_error_threshold: null
 
   async_grpo:
-    enabled: false
+    enabled: true
     max_trajectory_age_steps: 3
-    in_flight_weight_updates: false
+    in_flight_weight_updates: true
     recompute_kv_cache_after_weight_updates: false
 
 loss_fn:
@@ -79,7 +84,7 @@ loss_fn:
 
 checkpointing:
   enabled: true
-  checkpoint_dir: "results/grpo-mixed-capabilities-dtensor"
+  checkpoint_dir: "results/grpo-mixed-capabilities-dtensor-async"
   metric_name: "val:accuracy"
   higher_is_better: true
   keep_top_k: 100
@@ -91,8 +96,7 @@ policy:
   model_name: "nvidia/NVIDIA-Nemotron-Nano-9B-v2"  # override via CLI
   tokenizer:
     name: ${policy.model_name}
-    chat_template_kwargs:
-      enable_thinking: false
+    chat_template_kwargs: null
   hf_config_overrides: {}
   train_global_batch_size: ${mul:${grpo.num_prompts_per_step}, ${grpo.num_generations_per_prompt}}
   train_micro_batch_size: 8
@@ -204,7 +208,7 @@ policy:
   optimizer:
     name: "torch.optim.AdamW"
     kwargs:
-      lr: 3.0e-6
+      lr: 5.0e-6
       weight_decay: 0.01
       betas: [0.9, 0.999]
       eps: 1e-8
@@ -214,12 +218,12 @@ policy:
       kwargs:
         start_factor: 0.1
         end_factor: 1.0
-        total_iters: 10
+        total_iters: 13
     - name: "torch.optim.lr_scheduler.ConstantLR"
       kwargs:
         factor: 1.0
         total_iters: 10000000000
-    - milestones: [10]
+    - milestones: [13]
 
   generation:
     backend: "vllm"
@@ -251,7 +255,7 @@ policy:
         backend: eager
       mamba_ssm_cache_dtype: "float32"
     colocated:
-      enabled: true
+      enabled: false  # async GRPO requires non-colocated inference
       resources:
         gpus_per_node: null
         num_nodes: null
@@ -304,8 +308,6 @@ env:
         responses_api_models:
           vllm_model:
             uses_reasoning_parser: false
-            chat_template_kwargs:
-              enable_thinking: false
 
     code_gen:
       rollout_max_attempts_to_avoid_lp_nan: 1
@@ -317,8 +319,6 @@ env:
         responses_api_models:
           vllm_model:
             uses_reasoning_parser: false
-            chat_template_kwargs:
-              enable_thinking: false
 
     mcqa:
       rollout_max_attempts_to_avoid_lp_nan: 1
@@ -330,8 +330,6 @@ env:
         responses_api_models:
           vllm_model:
             uses_reasoning_parser: false
-            chat_template_kwargs:
-              enable_thinking: false
 
     reasoning_gym:
       rollout_max_attempts_to_avoid_lp_nan: 1
@@ -343,11 +341,9 @@ env:
         responses_api_models:
           vllm_model:
             uses_reasoning_parser: false
-            chat_template_kwargs:
-              enable_thinking: false
 
 logger:
-  log_dir: "logs/grpo-mixed-capabilities-dtensor"
+  log_dir: "logs/grpo-mixed-capabilities-dtensor-async"
   num_val_samples_to_print: 0
   wandb_enabled: false
   tensorboard_enabled: false
@@ -356,11 +352,11 @@ logger:
   monitor_gpus: true
   wandb:
     project: "grpo-mixed-capabilities"
-    name: "grpo-mixed-capabilities-dtensor"
+    name: "grpo-mixed-capabilities-dtensor-async"
   tensorboard: {}
   mlflow:
     experiment_name: "grpo-mixed-capabilities"
-    run_name: "grpo-mixed-capabilities-dtensor"
+    run_name: "grpo-mixed-capabilities-dtensor-async"
   gpu_monitoring:
     collection_interval: 10
     flush_interval: 10
