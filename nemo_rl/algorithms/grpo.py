@@ -1906,6 +1906,16 @@ def grpo_train(
                     metrics["filtered_reward"] = rewards.numpy()
                     metrics["reward"] = repeated_batch["total_reward"].numpy()
 
+                # Per-environment reward breakdown
+                if "task_name" in repeated_batch:
+                    task_names = repeated_batch["task_name"]
+                    all_rewards = rewards.numpy()
+                    env_reward_sums: dict[str, list] = {}
+                    for task, r in zip(task_names, all_rewards):
+                        env_reward_sums.setdefault(task, []).append(r)
+                    for env, env_rewards in env_reward_sums.items():
+                        metrics[f"reward_per_env/{env}"] = np.mean(env_rewards).item()
+
                 metrics.update(train_results["all_mb_metrics"])
                 metrics.update(gen_step_metrics)
                 for k, v in metrics.items():

@@ -86,6 +86,8 @@ Depending on your data shape, you may want to change these values."""
             "rollout_max_attempts_to_avoid_lp_nan", 1
         )
 
+        self.agent_name = initial_global_config_dict.pop("agent_name", None)
+
         assert self.rollout_max_attempts_to_avoid_lp_nan >= 1, (
             "`rollout_max_attempts_to_avoid_lp_nan` must be at least 1"
         )
@@ -122,6 +124,9 @@ Depending on your data shape, you may want to change these values."""
         max_attempts, trial = self.rollout_max_attempts_to_avoid_lp_nan, 0
         while trial < max_attempts:
             nemo_gym_num_rows = len(nemo_gym_examples)
+            if self.agent_name:
+                for example in nemo_gym_examples:
+                    example.setdefault("agent_ref", {"name": self.agent_name})
             nemo_gym_result_iterator = self.rch.run_examples(
                 examples=nemo_gym_examples, head_server_config=self.head_server_config
             )
@@ -136,6 +141,8 @@ Depending on your data shape, you may want to change these values."""
                     nemo_rl_result = self._postprocess_nemo_gym_to_nemo_rl_result(
                         nemo_gym_result, tokenizer
                     )
+                    if "agent_ref" in nemo_gym_row:
+                        nemo_rl_result["agent_ref"] = nemo_gym_row["agent_ref"]
 
                 nemo_rl_rowidxs.append(nemo_gym_row["_rowidx"])
                 nemo_rl_results.append(nemo_rl_result)

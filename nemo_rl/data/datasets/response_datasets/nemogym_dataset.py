@@ -25,10 +25,13 @@ class NemoGymDataset(RawDataset):
         repeat: Number of times to repeat the dataset, default is 1
     """
 
-    def __init__(self, data_path: str, repeat: int = 1, **kwargs) -> None:
-        self.task_name = "-".join(data_path.split("/")[-2:]).split(".")[0]
-        if self.task_name[0] == "-":
-            self.task_name = self.task_name[1:]
+    def __init__(self, data_path: str, repeat: int = 1, env_name: str = None, **kwargs) -> None:
+        if env_name is not None:
+            self.task_name = env_name
+        else:
+            self.task_name = "-".join(data_path.split("/")[-2:]).split(".")[0]
+            if self.task_name[0] == "-":
+                self.task_name = self.task_name[1:]
 
         # load raw line from jsonl
         # will use `json.loads` to load to dict format at `nemo_gym_data_processor` later since `Dataset` cannot handle nested structure well

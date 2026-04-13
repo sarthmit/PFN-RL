@@ -53,6 +53,8 @@ class PY_EXECUTABLES:
     FSDP = f"uv run --locked --extra fsdp --directory {git_root}"
 
     # Use NeMo-RL direct dependencies and nemo-automodel.
+    # deep_ep is in its own extra (deep_ep) and not included here because it requires
+    # Hopper (sm_90+) PTX features unavailable on A100/sm_80.
     AUTOMODEL = f"uv run --locked --extra automodel --directory {git_root}"
 
     # Use NeMo-RL direct dependencies and Megatron.
@@ -98,9 +100,25 @@ def init_ray(log_dir: Optional[str] = None) -> None:
     Args:
         log_dir: Optional directory to store Ray logs and temp files.
     """
+    # Disable Ray's uv-run integration before ray.init so workers are not
+    # launched via `uv run`, which would trigger a venv rebuild in the temp
+    # working_dir and cause worker registration timeouts.
+    os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
+
     # Set up runtime environment
     env_vars = dict(os.environ)
     env_vars.pop("RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES", None)
+    # Ensure NEMO_RL_VENV_DIR is an absolute path so Ray workers running in
+    # temp working_dir locations can find pre-built venvs in the real project root.
+    if "NEMO_RL_VENV_DIR" not in env_vars:
+        env_vars["NEMO_RL_VENV_DIR"] = os.path.join(git_root, "venvs")
+    # Resolve cache dirs to absolute paths so workers in Ray temp dirs use the same cache.
+    for _cache_var in ("UV_CACHE_DIR", "HF_HOME", "VLLM_CACHE_DIR", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE"):
+        if _cache_var in env_vars:
+            env_vars[_cache_var] = os.path.abspath(env_vars[_cache_var])
+    # Point uv to the pre-built project venv so workers don't rebuild it.
+    if "VIRTUAL_ENV" in env_vars:
+        env_vars["UV_PROJECT_ENVIRONMENT"] = env_vars["VIRTUAL_ENV"]
     runtime_env = {
         "env_vars": env_vars,  # Pass thru all user environment variables
     }
@@ -167,7 +185,7 @@ def init_ray(log_dir: Optional[str] = None) -> None:
 
     ray.init(
         log_to_driver=True,
-        include_dashboard=True,
+        include_dashboard=False,
         runtime_env=local_runtime_env,
         _temp_dir=os.path.abspath(log_dir) if log_dir else None,
         resources={cvd_tag: 1},
@@ -346,8 +364,8 @@ class RayVirtualCluster:
         # Add timeout to prevent hanging indefinitely
         try:
             ray.get(
-                [pg.ready() for pg in placement_groups], timeout=180
-            )  # 3-minute timeout
+                [pg.ready() for pg in placement_groups], timeout=600
+            )  # 10-minute timeout
         except (TimeoutError, ray.exceptions.GetTimeoutError):
             # Clean up any created placement groups
             for pg in placement_groups:

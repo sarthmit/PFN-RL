@@ -14,7 +14,7 @@
 
 from typing import Any, Optional, Union
 
-from datasets import concatenate_datasets
+from datasets import concatenate_datasets, interleave_datasets
 from transformers import AutoProcessor, AutoTokenizer
 
 from nemo_rl.data import DataConfig
@@ -133,8 +133,28 @@ def setup_response_data(
             for data in data_list
         }
     else:
-        # merge datasets into a single dataset
-        merged_data = concatenate_datasets([data.dataset for data in data_list])
+        # merge datasets into a single dataset, respecting per-dataset fractions if set
+        raw_fractions = [cfg.get("fraction") for cfg in data_config["train"]]
+        if any(f is not None for f in raw_fractions):
+            # Fill in missing fractions with uniform weight among unspecified datasets
+            n = len(raw_fractions)
+            specified = [f for f in raw_fractions if f is not None]
+            default_weight = (1.0 - sum(specified)) / (n - len(specified)) if len(specified) < n else 0.0
+            weights = [f if f is not None else default_weight for f in raw_fractions]
+            total = sum(weights)
+            assert total > 0, "Dataset fractions must sum to a positive value."
+            probabilities = [w / total for w in weights]
+            for data, prob in zip(data_list, probabilities):
+                print(
+                    f"  - Dataset {data.task_name} sampling probability: {prob:.4f}"
+                )
+            merged_data = interleave_datasets(
+                [data.dataset for data in data_list],
+                probabilities=probabilities,
+                stopping_strategy="all_exhausted",
+            )
+        else:
+            merged_data = concatenate_datasets([data.dataset for data in data_list])
         dataset = AllTaskProcessedDataset(
             merged_data,
             tokenizer,

@@ -1133,12 +1133,42 @@ def run_async_nemo_gym_rollout(
         row["_rowidx"] = rowidx
 
     with timer.time(f"{timer_prefix}/run_rollouts"):
-        nemo_gym_environment = task_to_env["nemo_gym"]
-        results, rollout_loop_timing_metrics = ray.get(
-            nemo_gym_environment.run_rollouts.remote(
-                nemo_gym_rows, tokenizer, timer_prefix
+        # Get task names for routing; default to "nemo_gym" for backward compatibility
+        task_names = input_batch.get("task_name") or (["nemo_gym"] * len(nemo_gym_rows))
+
+        # Group row indices by task_name
+        task_groups: dict[str, list[int]] = {}
+        for i, task_name in enumerate(task_names):
+            task_groups.setdefault(task_name, []).append(i)
+
+        # Fan out to the appropriate nemo_gym environments concurrently
+        futures: dict[str, tuple[list[int], Any]] = {}
+        for task_name, global_indices in task_groups.items():
+            if task_name not in task_to_env:
+                raise ValueError(
+                    f"No NeMo-Gym environment found for task: {task_name!r}. "
+                    f"Available environments: {list(task_to_env.keys())}"
+                )
+            env = task_to_env[task_name]
+            # Re-index _rowidx locally so NemoGym.run_rollouts can sort within its sub-batch
+            sub_rows = []
+            for local_idx, global_idx in enumerate(global_indices):
+                row = dict(nemo_gym_rows[global_idx])
+                row["_rowidx"] = local_idx
+                sub_rows.append(row)
+            futures[task_name] = (
+                global_indices,
+                env.run_rollouts.remote(sub_rows, tokenizer, timer_prefix),
             )
-        )
+
+        # Collect results from all environments and reassemble in original batch order
+        results: list[Any] = [None] * len(nemo_gym_rows)
+        rollout_loop_timing_metrics: dict[str, Any] = {}
+        for task_name, (global_indices, future) in futures.items():
+            task_results, task_timing = ray.get(future)
+            for local_idx, global_idx in enumerate(global_indices):
+                results[global_idx] = task_results[local_idx]
+            rollout_loop_timing_metrics.update(task_timing)
 
         # Tensorize all token ids
         for r in results:
@@ -1211,7 +1241,7 @@ def run_async_nemo_gym_rollout(
     with timer.time(f"{timer_prefix}/per_agent_misc_metrics"):
         agent_to_results: dict[str, list[dict]] = defaultdict(list)
         for nemo_gym_row, result in zip(nemo_gym_rows, results):
-            agent_ref = nemo_gym_row["agent_ref"]
+            agent_ref = nemo_gym_row.get("agent_ref") or result.get("agent_ref") or result["full_result"].get("agent_ref")
             agent_name = agent_ref["name"]
             agent_to_results[agent_name].append(result["full_result"])
             result["agent_ref"] = agent_ref

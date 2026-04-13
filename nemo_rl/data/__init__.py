@@ -31,6 +31,12 @@ class ResponseDatasetConfig(TypedDict):
     split_validation_size: NotRequired[float]
     # Seed for train/validation split when split_validation_size > 0
     seed: NotRequired[int]
+    # Sampling fraction for this dataset when mixing multiple datasets.
+    # Values are relative weights (need not sum to 1); they will be normalized.
+    # If omitted for all datasets, data is concatenated with equal weight.
+    # If specified for any dataset, all datasets use proportional interleaving
+    # (missing fractions default to uniform weight among the unspecified datasets).
+    fraction: NotRequired[float]
 
 
 class PreferenceDatasetConfig(TypedDict):

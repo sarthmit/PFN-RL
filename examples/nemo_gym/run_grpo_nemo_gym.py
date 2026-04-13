@@ -204,21 +204,41 @@ The validation set you pass in will directly be used for validation with no addi
         master_config,
     ) = setup(config, tokenizer, train_dataset, val_dataset)
 
-    is_trajectory_collection = (
-        config["env"]["nemo_gym"].pop("is_trajectory_collection", False) or False
-    )
-    nemo_gym_config = NemoGymConfig(
-        model_name=policy_generation.cfg["model_name"],
-        base_urls=policy_generation.dp_openai_server_base_urls,
-        initial_global_config_dict=config["env"]["nemo_gym"],
-    )
-    nemo_gym = create_env(env_name="nemo_gym", env_config=nemo_gym_config)
-    # Blocking wait for NeMo-Gym to spin up
-    ray.get(nemo_gym.health_check.remote())
+    # Support both single-env (env.nemo_gym) and multi-env (env.nemo_gym_envs) configs.
+    # Multi-env: env.nemo_gym_envs is a dict mapping task_name -> nemo_gym config dict.
+    # Single-env (backward compat): env.nemo_gym is the config dict, task_name is "nemo_gym".
+    env_config = config["env"]
+    if "nemo_gym_envs" in env_config and env_config["nemo_gym_envs"]:
+        nemo_gym_envs_cfg: dict = env_config["nemo_gym_envs"]
+        # Determine if any env requests trajectory collection
+        is_trajectory_collection = any(
+            cfg.pop("is_trajectory_collection", False) or False
+            for cfg in nemo_gym_envs_cfg.values()
+        )
+        task_to_env = {}
+        for task_name, gym_cfg in nemo_gym_envs_cfg.items():
+            nemo_gym_config = NemoGymConfig(
+                model_name=policy_generation.cfg["model_name"],
+                base_urls=policy_generation.dp_openai_server_base_urls,
+                initial_global_config_dict=gym_cfg,
+            )
+            task_to_env[task_name] = create_env(env_name="nemo_gym", env_config=nemo_gym_config)
+        # Blocking wait for all NeMo-Gym instances to spin up
+        ray.get([env.health_check.remote() for env in task_to_env.values()])
+    else:
+        is_trajectory_collection = (
+            env_config["nemo_gym"].pop("is_trajectory_collection", False) or False
+        )
+        nemo_gym_config = NemoGymConfig(
+            model_name=policy_generation.cfg["model_name"],
+            base_urls=policy_generation.dp_openai_server_base_urls,
+            initial_global_config_dict=env_config["nemo_gym"],
+        )
+        nemo_gym = create_env(env_name="nemo_gym", env_config=nemo_gym_config)
+        # Blocking wait for NeMo-Gym to spin up
+        ray.get(nemo_gym.health_check.remote())
+        task_to_env = {"nemo_gym": nemo_gym}
 
-    # Bind task_to_env and val_task_to_env for nemo_gym env
-    # Hardcode here to match `run_async_nemo_gym_rollout`
-    task_to_env = {"nemo_gym": nemo_gym}
     val_task_to_env = task_to_env
 
     if is_trajectory_collection:

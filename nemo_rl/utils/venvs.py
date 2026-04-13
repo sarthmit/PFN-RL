@@ -97,9 +97,48 @@ def create_local_venv(
     subprocess.run(["uv", "sync", "--directory", git_root], env=env, check=True)
     subprocess.run(exec_cmd, env=env, check=True)
 
+    # transformer-engine cannot be built from source in this environment (no system CUDA),
+    # so we inject a minimal dist-info stub so that importlib.metadata.version("transformer-engine")
+    # succeeds. Megatron-LM's megatron/core/utils.py calls this at import time even on the
+    # DTensor path; without the stub the worker venv crashes on import.
+    _inject_transformer_engine_stub(venv_path)
+
     # Return the path to the python executable in the virtual environment
     python_path = os.path.join(venv_path, "bin", "python")
     return python_path
+
+
+def _inject_transformer_engine_stub(venv_path: str) -> None:
+    """Create a minimal transformer-engine dist-info so importlib.metadata can find it.
+
+    The real transformer-engine package requires a complex CUDA source build that is not
+    available on Mila bare-metal nodes. The pyproject.toml uses a dependency-metadata stub
+    so uv does not attempt the build, but that stub is not reflected as a .dist-info on
+    disk. Megatron-LM's megatron/core/utils.py::get_te_version_str() calls
+    importlib.metadata.version("transformer-engine") unconditionally at module import time,
+    which raises PackageNotFoundError unless a dist-info is present.
+    """
+    import glob as _glob
+
+    site_packages = os.path.join(venv_path, "lib")
+    # find site-packages across any python3.x sub-directory
+    candidates = _glob.glob(os.path.join(site_packages, "python3.*", "site-packages"))
+    for sp in candidates:
+        dist_info = os.path.join(sp, "transformer_engine-2.14.0+71bbefb.dist-info")
+        if os.path.exists(dist_info):
+            continue
+        os.makedirs(dist_info, exist_ok=True)
+        with open(os.path.join(dist_info, "METADATA"), "w") as f:
+            f.write(
+                "Metadata-Version: 2.1\n"
+                "Name: transformer-engine\n"
+                "Version: 2.14.0+71bbefb\n"
+                "Summary: Transformer acceleration library (stub — real build not available)\n"
+                "Requires-Python: >=3.8\n"
+            )
+        with open(os.path.join(dist_info, "RECORD"), "w") as f:
+            pass  # empty RECORD is valid
+        print(f"Injected transformer-engine dist-info stub into {sp}")
 
 
 # Ray-based helper to create a virtual environment on each Ray node

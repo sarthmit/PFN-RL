@@ -13,7 +13,7 @@ readme = { file = "README.md", content-type = "text/markdown" }
 name = "nemo-rl"
 dynamic = ["version", "readme"]
 description = "NeMo RL: A Scalable and Efficient Post-Training Library for Models Ranging from 1 GPU to 1000s, and from Tiny to >100B Parameters"
-requires-python = ">=3.13.11"
+requires-python = ">=3.12"
 license = { text = "Apache 2.0" }
 dependencies = [
   "setuptools",
@@ -70,6 +70,10 @@ automodel = [
   "causal-conv1d",
   "nv-grouped-gemm",
   "transformer-engine[pytorch]>=2.9.0a0,<2.12.0",
+]
+# deep_ep requires Hopper (sm_90+) PTX features unavailable on A100/sm_80.
+# It is only needed for MoE expert parallelism; install separately on supported hardware.
+deep_ep = [
   "deep_ep @ git+https://github.com/deepseek-ai/DeepEP.git@bfded34800dfec415b71503f8205181de90b2480",
 ]
 vllm = [

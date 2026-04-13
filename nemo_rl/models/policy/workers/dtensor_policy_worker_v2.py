@@ -513,6 +513,13 @@ class DTensorPolicyWorkerV2Impl(AbstractPolicyWorker, ColocatablePolicyInterface
     ) -> BatchedDataDict[LogprobOutputSpec]:
         """Get the logprobs of the model for a batch of data.
 
+        Note: empty_cache() is called at the start to reclaim GPU memory that
+        may have been cached by CUDA's allocator during prior operations (e.g.
+        vLLM sleep-mode release or previous training micro-batches).  Without
+        this, small models (e.g. 0.6B) can OOM here even though large models
+        (4B+) do not, because the large static footprint of bigger models
+        naturally limits how much the allocator can cache.
+
         Uses the configured logprob_batch_size to do microbatching.
 
         Input data is assumed to be right-padded. The method internally converts to
@@ -523,6 +530,7 @@ class DTensorPolicyWorkerV2Impl(AbstractPolicyWorker, ColocatablePolicyInterface
           We use the convention that the logprob of the first token is 0 so that the sequence length is maintained.
           The logprob of input token i is specified at position i in the output logprobs tensor.
         """
+        torch.cuda.empty_cache()
         logprob_batch_size = (
             micro_batch_size
             if micro_batch_size is not None
