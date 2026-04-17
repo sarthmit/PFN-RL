@@ -29,7 +29,7 @@ grpo:
   max_num_steps: 1000000
   normalize_rewards: false
   use_leave_one_out_baseline: true
-  val_period: 50
+  val_period: 20
   val_at_start: true
   val_at_end: true
   overlong_filtering: false
@@ -83,7 +83,7 @@ checkpointing:
   metric_name: "val:accuracy"
   higher_is_better: true
   keep_top_k: 100
-  save_period: 50
+  save_period: 20
   checkpoint_must_save_by: null
   save_optimizer: true
 

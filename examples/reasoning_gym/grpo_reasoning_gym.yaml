@@ -1,0 +1,126 @@
+# GRPO with Reasoning Gym as a standard ResponseDataset. Inherits from
+# examples/configs/grpo_math_1B.yaml and overrides only what differs.
+defaults: "../configs/grpo_math_1B.yaml"
+
+grpo:
+  num_prompts_per_step: 64
+  num_generations_per_prompt: 8
+  max_rollout_turns: 1
+  max_num_steps: 500
+  max_num_epochs: 1
+  val_period: 20
+  val_at_start: true
+  max_val_samples: 128
+  val_batch_size: 128
+  seed: 42
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  reference_policy_kl_type: "k3"
+  ratio_clip_min: 0.2
+  ratio_clip_max: 0.2
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "results/grpo-reasoning-gym"
+  metric_name: "val:accuracy"
+  higher_is_better: true
+  keep_top_k: 3
+  save_period: 50
+
+policy:
+  model_name: "Qwen/Qwen3-4B-Instruct"
+  max_total_sequence_length: 4096
+  train_global_batch_size: 512
+  train_micro_batch_size: 4
+  logprob_batch_size: 4
+
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    tensor_parallel_size: 1
+    cpu_offload: false
+    # activation checkpointing is required for 4B+ models on 80GB GPUs with
+    # colocated vLLM — without it, activations at seq 4096 OOM the DP rank.
+    activation_checkpointing: true
+
+  generation:
+    backend: "vllm"
+    max_new_tokens: ${policy.max_total_sequence_length}
+    temperature: 1.0
+    top_p: 1.0
+    vllm_cfg:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.6
+      max_model_len: ${policy.max_total_sequence_length}
+    colocated:
+      enabled: true
+
+# Replace parent's data block entirely — reasoning_gym is a single logical task.
+data:
+  _override_: true
+  max_input_seq_length: ${policy.max_total_sequence_length}
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+
+  train:
+    dataset_name: "ReasoningGym"
+    size: 10000
+    items_per_env: 5000
+    seed: ${grpo.seed}
+    split: "train"
+    # Prompt-length diagnostics + filter. When tokenizer_name is set the
+    # dataset logs min/p25/p50/p75/p90/p99/max of the tokenized prompt
+    # length (after chat template); rows over max_prompt_tokens are dropped.
+    tokenizer_name: ${policy.tokenizer.name}
+    max_prompt_tokens: 1536
+    # Fractions follow Table 6 of arXiv:2505.24760. `arc` is merged into
+    # `cognition`; `probability` is not present. Override per-category via
+    # e.g. ++data.train.category_fractions.algebra=0.25 on the CLI.
+    category_fractions:
+      algebra: 0.15
+      algorithmic: 0.15
+      arithmetic: 0.15
+      cognition: 0.10
+      games: 0.10
+      geometry: 0.05
+      graphs: 0.10
+      logic: 0.10
+      code: 0.05
+      induction: 0.05
+
+  validation:
+    dataset_name: "ReasoningGym"
+    size: 256
+    items_per_env: 5000
+    seed: ${grpo.seed}
+    split: "validation"
+    tokenizer_name: ${data.train.tokenizer_name}
+    max_prompt_tokens: ${data.train.max_prompt_tokens}
+    category_fractions: ${data.train.category_fractions}
+
+  default:
+    prompt_file: "examples/prompts/reasoning_gym.txt"
+    system_prompt_file: null
+    processor: "reasoning_gym_data_processor"
+    env_name: "reasoning_gym"
+
+env:
+  reasoning_gym: {}
+
+logger:
+  log_dir: "logs/reasoning-gym"
+  num_val_samples_to_print: 0
+  wandb_enabled: true
+  wandb:
+    project: "grpo-mixed-capabilities"
+    name: "grpo-mixed-capabilities-dtensor"
+  tensorboard_enabled: false
+  mlflow_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: true
+
+cluster:
+  gpus_per_node: 4
+  num_nodes: 1

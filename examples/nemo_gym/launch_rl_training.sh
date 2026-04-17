@@ -388,7 +388,10 @@ for env_name in active:
         "config_paths": meta["config_paths"],
         "policy_model": {
             "responses_api_models": {
-                "vllm_model": {"uses_reasoning_parser": False}
+                "vllm_model": {
+                    "uses_reasoning_parser": False,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                }
             }
         },
         "skip_venv_if_present": True,
